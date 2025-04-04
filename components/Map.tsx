@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  BusStop,
-  getBusArrivals,
-  getBusStops,
-  getNearbyBusStops,
-} from "@/lib/api";
+import { BusStop, getBusArrivals, getBusStops } from "@/lib/api";
 import useLocation from "@/lib/hooks/useLocation";
 import type { Icon } from "leaflet";
 import { BusFront, Loader2, MapPin } from "lucide-react";
@@ -42,18 +37,14 @@ const Marker = dynamic(
 const Popup = dynamic(() => import("react-leaflet").then((mod) => mod.Popup), {
   ssr: false,
 });
-const Circle = dynamic(
-  () => import("react-leaflet").then((mod) => mod.Circle),
-  {
-    ssr: false,
-  }
-);
 const ZoomControl = dynamic(
   () => import("react-leaflet").then((mod) => mod.ZoomControl),
   {
     ssr: false,
   }
 );
+// Import useMap hook directly since it can't be dynamically imported like the components
+import { useMap } from "react-leaflet";
 
 // Helper function to safely create SVG data URLs
 const createSvgDataUrl = (svgContent: string): string => {
@@ -221,34 +212,42 @@ interface LiveBus {
   feature: string;
 }
 
-// Custom React component for map controls
-const MapControls = ({
-  radius,
-  setRadius,
+// Map bounds tracker component with proper types
+const MapBoundsHandler = ({
+  onBoundsChanged,
 }: {
-  radius: number;
-  setRadius: (value: number) => void;
+  onBoundsChanged: (bounds: L.LatLngBounds, zoom: number) => void;
 }) => {
-  return (
-    <div className="absolute top-4 left-4 z-[9999] bg-white dark:bg-gray-800 p-3 rounded-lg shadow-lg pointer-events-auto">
-      <div className="flex items-center gap-2">
-        <label htmlFor="radius" className="text-sm font-medium">
-          Radius:
-        </label>
-        <select
-          id="radius"
-          value={radius}
-          onChange={(e) => setRadius(parseInt(e.target.value))}
-          className="block w-full p-2 text-sm rounded border border-gray-300 dark:border-gray-600"
-        >
-          <option value="500">500m</option>
-          <option value="1000">1km</option>
-          <option value="2000">2km</option>
-          <option value="3000">3km</option>
-        </select>
-      </div>
-    </div>
-  );
+  // Call useMap unconditionally as required by React Hooks rules
+  const map = useMap();
+
+  useEffect(() => {
+    // Check if we're in a browser environment and if map is available
+    if (typeof window === "undefined" || !map) return;
+
+    // Initial bounds update
+    const bounds = map.getBounds();
+    const zoom = map.getZoom();
+    onBoundsChanged(bounds, zoom);
+
+    // Add event listener for moveend (triggers after panning/zooming)
+    const handleMoveEnd = () => {
+      const newBounds = map.getBounds();
+      const currentZoom = map.getZoom();
+      onBoundsChanged(newBounds, currentZoom);
+    };
+
+    map.on("moveend", handleMoveEnd);
+    map.on("zoomend", handleMoveEnd);
+
+    // Cleanup
+    return () => {
+      map.off("moveend", handleMoveEnd);
+      map.off("zoomend", handleMoveEnd);
+    };
+  }, [map, onBoundsChanged]);
+
+  return null; // This is just a utility component with no visual rendering
 };
 
 // Legend component
@@ -319,12 +318,13 @@ const MapLegend = () => {
 export default function BusMap() {
   const location = useLocation();
   const [busStops, setBusStops] = useState<BusStop[]>([]);
-  const [nearbyBusStops, setNearbyBusStops] = useState<BusStop[]>([]);
+  const [visibleBusStops, setVisibleBusStops] = useState<BusStop[]>([]);
   const [liveBuses, setLiveBuses] = useState<LiveBus[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [radius, setRadius] = useState(1000); // 1km radius
   const [mapReady, setMapReady] = useState(false);
+  const [mapBounds, setMapBounds] = useState<L.LatLngBounds | null>(null);
+  const [currentZoom, setCurrentZoom] = useState<number>(15);
 
   // Load Leaflet CSS and initialize Leaflet when component mounts
   useEffect(() => {
@@ -372,28 +372,44 @@ export default function BusMap() {
     fetchBusStops();
   }, []);
 
-  // Update nearby bus stops when location changes
+  // Filter bus stops based on current map bounds and zoom level
   useEffect(() => {
-    if (location.latitude && location.longitude && busStops.length > 0) {
-      const nearby = getNearbyBusStops(
-        busStops,
-        location.latitude,
-        location.longitude,
-        radius
-      );
-      setNearbyBusStops(nearby);
-    }
-  }, [location.latitude, location.longitude, busStops, radius]);
+    if (!mapBounds || busStops.length === 0) return;
 
-  // Fetch bus arrival times for nearby bus stops
+    // First filter by bounds
+    let filteredStops = busStops.filter((stop) => {
+      return mapBounds.contains([stop.Latitude, stop.Longitude]);
+    });
+
+    // If zoomed out too far, limit the number of bus stops to prevent performance issues
+    // The lower the zoom number, the farther out the view (more zoomed out)
+    if (currentZoom <= 12) {
+      const maxStops = Math.max(
+        50,
+        Math.min(150, filteredStops.length * (currentZoom / 12))
+      );
+
+      // If we have too many stops, sample them evenly
+      if (filteredStops.length > maxStops) {
+        const samplingRate = Math.floor(filteredStops.length / maxStops);
+        filteredStops = filteredStops.filter(
+          (_, index) => index % samplingRate === 0
+        );
+      }
+    }
+
+    setVisibleBusStops(filteredStops);
+  }, [mapBounds, busStops, currentZoom]);
+
+  // Fetch bus arrival times for visible bus stops
   useEffect(() => {
     const fetchBusArrivals = async () => {
-      if (nearbyBusStops.length === 0) return;
+      if (visibleBusStops.length === 0) return;
 
       // Map to keep track of unique buses by their coordinates and service number
       const uniqueBusesMap = new Map<string, LiveBus>();
 
-      for (const stop of nearbyBusStops) {
+      for (const stop of visibleBusStops) {
         try {
           const arrivals = await getBusArrivals(stop.BusStopCode);
 
@@ -511,7 +527,7 @@ export default function BusMap() {
     // Refresh bus positions every 15 seconds
     const interval = setInterval(fetchBusArrivals, 15000);
     return () => clearInterval(interval);
-  }, [nearbyBusStops]);
+  }, [visibleBusStops]);
 
   // Get bus load color
   const getBusLoadColor = (load: string) => {
@@ -587,17 +603,27 @@ export default function BusMap() {
         {location.latitude && location.longitude && mapReady && (
           <MapContainer
             center={[location.latitude, location.longitude]}
-            zoom={15}
+            zoom={18}
+            minZoom={15} // Prevent zooming out too far
+            maxZoom={20}
             style={{ height: "100%", width: "100%" }}
             zoomControl={false}
           >
+            {/* Bounds handler */}
+            <MapBoundsHandler
+              onBoundsChanged={(bounds, zoom) => {
+                setMapBounds(bounds);
+                setCurrentZoom(zoom);
+              }}
+            />
+
             {/* Zoom control */}
             <ZoomControl position="bottomleft" />
 
             {/* Map tiles */}
             <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+              attribution='&copy; <a href="https://carto.com/">CARTO</a>'
             />
 
             {/* Current location marker */}
@@ -612,15 +638,8 @@ export default function BusMap() {
               </Popup>
             </Marker>
 
-            {/* Radius circle */}
-            <Circle
-              center={[location.latitude, location.longitude]}
-              radius={radius}
-              pathOptions={{ fillColor: "blue", fillOpacity: 0.1, weight: 1 }}
-            />
-
             {/* Bus stop markers */}
-            {nearbyBusStops.map((stop) => (
+            {visibleBusStops.map((stop) => (
               <Marker
                 key={stop.BusStopCode}
                 position={[stop.Latitude, stop.Longitude]}
@@ -682,12 +701,7 @@ export default function BusMap() {
         !error &&
         location.latitude &&
         location.longitude &&
-        mapReady && (
-          <>
-            <MapControls radius={radius} setRadius={setRadius} />
-            <MapLegend />
-          </>
-        )}
+        mapReady && <>{/* <MapLegend /> */}</>}
     </div>
   );
 }
