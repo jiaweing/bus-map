@@ -62,7 +62,13 @@ const createSvgDataUrl = (svgContent: string): string => {
 };
 
 // Custom bus icons using Lucide - returns undefined instead of null for compatibility
-const createBusIcon = (color: string): Icon | undefined => {
+const createBusIcon = (
+  color: string,
+  serviceNo: string,
+  type: string,
+  busStopCode?: string,
+  busStopDescription?: string
+): Icon | undefined => {
   if (typeof window === "undefined" || !window.L) return undefined;
 
   // Define background color based on load with better color palette
@@ -75,15 +81,23 @@ const createBusIcon = (color: string): Icon | undefined => {
       ? "#EF4444" // Red-500
       : "#3B82F6"; // Blue-500
 
-  // Create a wrapper SVG with a more elegant circle and positioned Bus icon
-  const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  // Determine deck type indicator
+  const isDeckTypeDefined = type === "DD" || type === "SD";
+  const deckTypeSymbol = type === "DD" ? "D" : "S"; // D for Double Deck, S for Single Deck
+
+  // Create a wrapper SVG with enhanced information
+  const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="76" height="68" viewBox="0 0 76 68">
     <defs>
       <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
         <feDropShadow dx="0" dy="1" stdDeviation="1" flood-opacity="0.3" />
       </filter>
     </defs>
-    <circle cx="16" cy="16" r="14" fill="${bgColor}" stroke="#00000022" stroke-width="1" filter="url(#shadow)" />
-    <g transform="translate(6.5, 6.5)">
+    
+    <!-- Bus Status Circle -->
+    <circle cx="38" cy="24" r="20" fill="${bgColor}" stroke="#00000022" stroke-width="1" filter="url(#shadow)" />
+    
+    <!-- Bus Icon -->
+    <g transform="translate(27, 11)">
       ${renderToString(
         <BusFront
           size={18}
@@ -93,13 +107,45 @@ const createBusIcon = (color: string): Icon | undefined => {
         />
       )}
     </g>
+    
+    <!-- Bus number -->
+    <text x="38" y="34" font-family="Arial, sans-serif" font-size="11" font-weight="bold" text-anchor="middle" fill="white">
+      ${serviceNo}
+    </text>
+    
+    <!-- Deck type indicator -->
+    ${
+      isDeckTypeDefined
+        ? `<circle cx="52" cy="12" r="8" fill="#FFFFFF" fill-opacity="0.9" stroke="#00000033" />
+    <text x="52" y="15" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle" fill="${bgColor}">
+      ${deckTypeSymbol}
+    </text>`
+        : ""
+    }
+    
+    <!-- Bus Stop Information Background -->
+    ${
+      busStopCode
+        ? `<rect x="8" y="48" width="60" height="16" rx="4" fill="#FFFFFF" fill-opacity="0.9" stroke="#00000033" stroke-width="1" />
+    <text x="38" y="59" font-family="Arial, sans-serif" font-size="9" font-weight="bold" text-anchor="middle" fill="#333333">
+      ${busStopCode} ${
+            busStopDescription
+              ? "- " +
+                (busStopDescription.length > 15
+                  ? busStopDescription.substring(0, 15) + "..."
+                  : busStopDescription)
+              : ""
+          }
+    </text>`
+        : ""
+    }
   </svg>`;
 
   return new window.L.Icon({
     iconUrl: createSvgDataUrl(svgContent.replace(/style="[^"]*"/g, "")),
-    iconSize: [32, 32],
-    iconAnchor: [16, 16],
-    popupAnchor: [0, -16],
+    iconSize: [76, 68],
+    iconAnchor: [38, 34],
+    popupAnchor: [0, -34],
   });
 };
 
@@ -166,6 +212,7 @@ const createUserIcon = (): Icon | undefined => {
 interface LiveBus {
   serviceNo: string;
   busStopCode: string;
+  busStopDescription: string;
   latitude: number;
   longitude: number;
   estimatedArrival: string;
@@ -208,28 +255,61 @@ const MapControls = ({
 const MapLegend = () => {
   return (
     <div className="absolute bottom-4 right-4 z-[9999] bg-white dark:bg-gray-800 p-3 rounded-lg shadow-lg pointer-events-auto">
-      <div className="text-sm font-medium mb-2">Bus Load</div>
-      <div className="flex flex-col gap-1">
-        <div className="flex items-center gap-2">
-          <div
-            className="w-4 h-4 rounded-full"
-            style={{ backgroundColor: "#10B981" }}
-          ></div>
-          <span className="text-xs">Seats Available</span>
+      <div className="text-sm font-medium mb-2">Bus Information</div>
+      <div className="flex flex-col gap-3">
+        <div>
+          <div className="text-xs font-medium mb-1">Bus Load</div>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <div
+                className="w-4 h-4 rounded-full"
+                style={{ backgroundColor: "#10B981" }}
+              ></div>
+              <span className="text-xs">Seats Available</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div
+                className="w-4 h-4 rounded-full"
+                style={{ backgroundColor: "#F59E0B" }}
+              ></div>
+              <span className="text-xs">Standing Available</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div
+                className="w-4 h-4 rounded-full"
+                style={{ backgroundColor: "#EF4444" }}
+              ></div>
+              <span className="text-xs">Limited Standing</span>
+            </div>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <div
-            className="w-4 h-4 rounded-full"
-            style={{ backgroundColor: "#F59E0B" }}
-          ></div>
-          <span className="text-xs">Standing Available</span>
+        <div>
+          <div className="text-xs font-medium mb-1">Deck Type</div>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <div className="flex items-center justify-center w-5 h-5 rounded-full bg-white border border-gray-300 text-xs font-bold">
+                D
+              </div>
+              <span className="text-xs">Double Deck</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center justify-center w-5 h-5 rounded-full bg-white border border-gray-300 text-xs font-bold">
+                S
+              </div>
+              <span className="text-xs">Single Deck</span>
+            </div>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <div
-            className="w-4 h-4 rounded-full"
-            style={{ backgroundColor: "#EF4444" }}
-          ></div>
-          <span className="text-xs">Limited Standing</span>
+        <div>
+          <div className="text-xs font-medium mb-1">Next Bus Stop</div>
+          <div className="flex items-center gap-2">
+            <div className="bg-white border border-gray-300 rounded-md px-2 py-0.5 text-2xs">
+              12345 - Example Stop
+            </div>
+          </div>
+          <span className="text-2xs text-gray-500 mt-1">
+            Shows code and name of the next bus stop
+          </span>
         </div>
       </div>
     </div>
@@ -310,7 +390,8 @@ export default function BusMap() {
     const fetchBusArrivals = async () => {
       if (nearbyBusStops.length === 0) return;
 
-      const buses: LiveBus[] = [];
+      // Map to keep track of unique buses by their coordinates and service number
+      const uniqueBusesMap = new Map<string, LiveBus>();
 
       for (const stop of nearbyBusStops) {
         try {
@@ -329,16 +410,27 @@ export default function BusMap() {
               const lng = parseFloat(service.NextBus.Longitude);
 
               if (!isNaN(lat) && !isNaN(lng)) {
-                buses.push({
-                  serviceNo: service.ServiceNo,
-                  busStopCode: stop.BusStopCode,
-                  latitude: lat,
-                  longitude: lng,
-                  estimatedArrival: service.NextBus.EstimatedArrival,
-                  type: service.NextBus.Type,
-                  load: service.NextBus.Load,
-                  feature: service.NextBus.Feature,
-                });
+                // Create a unique key based on service number and coordinates
+                // Use a precision of 6 decimal places for coordinates
+                const uniqueKey = `${service.ServiceNo}-${lat.toFixed(
+                  6
+                )}-${lng.toFixed(6)}`;
+
+                // Only add this bus if we haven't seen it before
+                if (!uniqueBusesMap.has(uniqueKey)) {
+                  const bus = {
+                    serviceNo: service.ServiceNo,
+                    busStopCode: stop.BusStopCode,
+                    busStopDescription: stop.Description,
+                    latitude: lat,
+                    longitude: lng,
+                    estimatedArrival: service.NextBus.EstimatedArrival,
+                    type: service.NextBus.Type,
+                    load: service.NextBus.Load,
+                    feature: service.NextBus.Feature,
+                  };
+                  uniqueBusesMap.set(uniqueKey, bus);
+                }
               }
             }
 
@@ -351,16 +443,24 @@ export default function BusMap() {
               const lng = parseFloat(service.NextBus2.Longitude);
 
               if (!isNaN(lat) && !isNaN(lng)) {
-                buses.push({
-                  serviceNo: service.ServiceNo,
-                  busStopCode: stop.BusStopCode,
-                  latitude: lat,
-                  longitude: lng,
-                  estimatedArrival: service.NextBus2.EstimatedArrival,
-                  type: service.NextBus2.Type,
-                  load: service.NextBus2.Load,
-                  feature: service.NextBus2.Feature,
-                });
+                const uniqueKey = `${service.ServiceNo}-${lat.toFixed(
+                  6
+                )}-${lng.toFixed(6)}`;
+
+                if (!uniqueBusesMap.has(uniqueKey)) {
+                  const bus = {
+                    serviceNo: service.ServiceNo,
+                    busStopCode: stop.BusStopCode,
+                    busStopDescription: stop.Description,
+                    latitude: lat,
+                    longitude: lng,
+                    estimatedArrival: service.NextBus2.EstimatedArrival,
+                    type: service.NextBus2.Type,
+                    load: service.NextBus2.Load,
+                    feature: service.NextBus2.Feature,
+                  };
+                  uniqueBusesMap.set(uniqueKey, bus);
+                }
               }
             }
 
@@ -373,16 +473,24 @@ export default function BusMap() {
               const lng = parseFloat(service.NextBus3.Longitude);
 
               if (!isNaN(lat) && !isNaN(lng)) {
-                buses.push({
-                  serviceNo: service.ServiceNo,
-                  busStopCode: stop.BusStopCode,
-                  latitude: lat,
-                  longitude: lng,
-                  estimatedArrival: service.NextBus3.EstimatedArrival,
-                  type: service.NextBus3.Type,
-                  load: service.NextBus3.Load,
-                  feature: service.NextBus3.Feature,
-                });
+                const uniqueKey = `${service.ServiceNo}-${lat.toFixed(
+                  6
+                )}-${lng.toFixed(6)}`;
+
+                if (!uniqueBusesMap.has(uniqueKey)) {
+                  const bus = {
+                    serviceNo: service.ServiceNo,
+                    busStopCode: stop.BusStopCode,
+                    busStopDescription: stop.Description,
+                    latitude: lat,
+                    longitude: lng,
+                    estimatedArrival: service.NextBus3.EstimatedArrival,
+                    type: service.NextBus3.Type,
+                    load: service.NextBus3.Load,
+                    feature: service.NextBus3.Feature,
+                  };
+                  uniqueBusesMap.set(uniqueKey, bus);
+                }
               }
             }
           });
@@ -394,7 +502,8 @@ export default function BusMap() {
         }
       }
 
-      setLiveBuses(buses);
+      // Convert map values to array for state update
+      setLiveBuses(Array.from(uniqueBusesMap.values()));
     };
 
     fetchBusArrivals();
@@ -532,7 +641,13 @@ export default function BusMap() {
               <Marker
                 key={`${bus.serviceNo}-${bus.busStopCode}-${index}`}
                 position={[bus.latitude, bus.longitude]}
-                icon={createBusIcon(getBusLoadColor(bus.load))}
+                icon={createBusIcon(
+                  getBusLoadColor(bus.load),
+                  bus.serviceNo,
+                  bus.type,
+                  bus.busStopCode,
+                  bus.busStopDescription
+                )}
               >
                 <Popup>
                   <div>
